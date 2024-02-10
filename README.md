@@ -10,3 +10,5 @@ Scale script adapted from https://github.com/WetDesertRock/music.lua
 
 ## ARM_view_fretboard.tosc
 Visualization for Ardour Rehearsal Manager (https://github.com/boriswerner/ArdourRehearsalManager)
+Including a 4-string bass fretboard visualization of the matching notes from the minor/major scale of the songs key. Can be changed to any other scale.
+Scale script adapted from https://github.com/WetDesertRock/music.lua
