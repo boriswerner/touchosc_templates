@@ -1,0 +1,8 @@
+.venv
+build/
+dist/
+.vs/*
+.vscode/*
+*_bkup
+*_test.tosc
+*.spec
