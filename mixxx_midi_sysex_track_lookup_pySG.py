@@ -1,13 +1,11 @@
+#PySimpleGUI Version - discontinued due to pro licensing, replaced by customtkinter version
+
 import mido
 import mido.backends.rtmidi
 
 import os
 import sqlite3
 import PySimpleGUI as sg
-import customtkinter as tk
-
-from customtkinter import *  
-
 from time import time
 from pythonosc import udp_client, dispatcher, osc_server, osc_message_builder, osc_bundle_builder
 
@@ -26,7 +24,6 @@ DEBUG_ACTIVE = True
 CONFIG_FILE = "config.cfg"
 midi_input_port = None
 database_file = None
-dbConnection = None
 osc_tosc_client = None
 osc_thread = None
 stop_threads = False
@@ -84,90 +81,6 @@ def load_config():
 
     return existing_config
 
-def connect_to_osc_server(osc_server_address, osc_server_port):
-    global osc_tosc_client
-    try:
-        client = CustomSimpleUDPClient(osc_server_address, osc_server_port)
-        debug_print(f"Connected to OSC server: {osc_server_address}:{osc_server_port}")
-        return client
-    except Exception as e:
-        sg.popup_error(f"Error connecting to OSC server:\n{e}")
-        return None
-    
-def start_osc_server(host, port):
-    global dbConnection
-    dispatcher = osc_server.Dispatcher()
-    dispatcher.set_default_handler(receive_osc_message)
-    global stop_threads
-    stop_threads = False
-    server = osc_server.ThreadingOSCUDPServer((host, port), dispatcher)
-
-    debug_print(f"OSC Server listening on port {port}")
-
-    while not stop_threads:
-        # Use select to handle requests with a timeout
-        readable, _, _ = select.select([server.socket], [], [], 1.0)
-        if readable:
-            server.handle_request()
-    if dbConnection:
-        dbConnection.close()
-    server.server_close()
-    debug_print("OSC Server stopped.")
-
-def start_osc_server_in_thread(host, port):
-    global osc_thread
-    osc_thread = Thread(target=start_osc_server, args=[host, port])
-    osc_thread.start()
-    return osc_thread
-    
-def receive_osc_message(addr, *args):
-    debug_print(f"Received OSC message: {addr} {args}")
-       
-def send_osc_message(address, value):
-    global osc_tosc_client
-    debug_print("send_osc_message address")
-    debug_print(address)
-    debug_print("send_osc_message value")
-    debug_print(value)
-
-    osc_tosc_client.send_message(address, value)
-def startDbConnection():
-    debug_print("start DB Connection")
-    database_file = file_path_entry.get()
-    dbConnection = sqlite3.connect(database_file)
-    return dbConnection
-
-def stopDbConnection(dbConnection):
-    debug_print("stop DB Connection")
-    if dbConnection:
-        dbConnection.close()
-
-# Function to query the mixx SQLite database to retrieve artist & title based on duration, bpm and key (duplicates might happen)
-def query_database(duration, bpm, key):
-    global database_file
-    dbConnection = startDbConnection()
-    debug_print("query...")
-    cursor = dbConnection.cursor()
-    
-    debug_print("cursor")
-    query = f"""
-        SELECT artist, title
-        FROM library
-        WHERE CAST(duration as INTEGER) = {duration}
-        AND ROUND(bpm, 1) = {bpm}
-        AND key = '{key}'
-        group by artist, title
-    """
-    debug_print(query)
-    cursor.execute(query)
-    results = cursor.fetchall()
-    stopDbConnection(dbConnection)
-   # Extract title and artist from query results
-    #titles_artists = [(result[0], result[1]) for result in results]
-    
-    debug_print(results)
-    return results
-       
 # wait for required trackinfo to be complete (separate sysex messages for duration, bpm and key are being sent from mixxx)
 #TODO: consolidate deck1 & deck2, e.g. into an array / list / obejct
 def collect_track_info(deck_number, fileduration, filekey, filebpm):
@@ -222,11 +135,8 @@ def collect_track_info(deck_number, fileduration, filekey, filebpm):
         else:
             debug_print("not complete info")
 
-
 # Function to process MIDI messages (implementation of Trackdata_out_via_sysex messages: https://github.com/Andymann/mixxx-controllers)
 def process_midi_message(message):
-    debug_print("process_midi_message")
-    debug_print(message)
     msgbytearray = message.bin()
 
     #if(msgbytearray[0] == 0xF0 and msgbytearray[1] == 0x7F):
@@ -327,6 +237,35 @@ def process_midi_message(message):
         else:
             loop_condition = False
 
+        
+
+# Function to query the mixx SQLite database to retrieve artist & title based on duration, bpm and key (duplicates might happen)
+def query_database(duration, bpm, key):
+    global database_file
+    connection = sqlite3.connect(database_file)
+    cursor = connection.cursor()
+    
+    query = f"""
+        SELECT artist, title
+        FROM library
+        WHERE CAST(duration as INTEGER) = {duration}
+        AND ROUND(bpm, 1) = {bpm}
+        AND key = '{key}'
+        group by artist, title
+    """
+    debug_print(query)
+    cursor.execute(query)
+    results = cursor.fetchall()
+    
+    connection.close()
+
+   # Extract title and artist from query results
+    #titles_artists = [(result[0], result[1]) for result in results]
+    
+    debug_print(results)
+    return results
+
+
 # method to get primary IP adress of the PC (source: https://stackoverflow.com/questions/166506/finding-local-ip-addresses-using-pythons-stdlib)
 def get_ip():
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -340,130 +279,142 @@ def get_ip():
         finally:
             s.close()
         return IP
-
-def start_midi(selected_device):
-    #TODO: check if midi device is existing and available (error handling), add to autostart option
-    global midi_input_port
-    print("start_midi")
-    print(selected_device)
-    if selected_device and file_path_entry.get():
-        database_file = file_path_entry.get()
-        debug_print('Starting MIDI...')
-        midi_input_port = mido.open_input(selected_device)
-        midi_input_port.callback = process_midi_message
-        debug_print('Started MIDI...')
-        save_config(database_file, None, None, None, None, selected_device)
-    else:
-        sg.popup("Please select both MIDI device and SQLite database.")
-
-def stop_midi():
-    global midi_input_port
-    if(midi_input_port):
-        debug_print('Stopping MIDI...')
-        midi_input_port.close()
-
-def start_osc():
-    osc_server_address = osc_host_entry.get()
-    osc_send_port = osc_send_port_entry.get()
-    osc_receive_port = osc_receive_port_entry.get()
-    autostartosc = autostartosc_var.get()
-    debug_print(f"Saved osc_tosc_server_address: {osc_server_address}")
-    debug_print(f"Saved osc_tosc_server_port: {osc_send_port}")
-    save_config(None, autostartosc, osc_server_address, osc_send_port, osc_receive_port, None)
-    if osc_server_address and osc_send_port:
-        global osc_tosc_client
-        osc_tosc_client = connect_to_osc_server(osc_server_address, int(osc_send_port))
-
-    #TODO: server not used at the moment as no respone is required
-    #Start OSC server in a separate thread
-    #osc_server_host = get_ip()
-    #if osc_thread:
-    #    osc_thread.join()  # Wait for the previous OSC thread to finish
-    #osc_thread = start_osc_server_in_thread(osc_server_host, int(osc_receive_port))
-
-def send_osc_test():
-    if osc_tosc_client:
-        send_osc_message("/deck1_trackinfo", r"TEST \n Newline \r Return \r\n RN")
-        #osc_tosc_client.send_message("/deck1_trackinfo", r"TEST \n Newline \r Return \r\n RN")
-
-def test_database_query():
-    global dbConnection
-    global database_file
-    database_file = file_path_entry.get()
-    save_config(database_file, None, None, None, None, None)
-    query_database(173, 152.0, 'A')
-
-def selectfile():
-    filename = filedialog.askopenfilename()
-    print(filename)
-    file_path_entry.delete(0, END)
-    file_path_entry.insert(0, filename)
-
-config = load_config()
-
-# OSC setup
-if(config['autostartosc']):
-    if config['osc_tosc_server_address'] and config['osc_tosc_server_port']:
-        osc_tosc_client = connect_to_osc_server(config['osc_tosc_server_address'], int(config['osc_tosc_server_port']))
-    if config['osc_server_port']:
-        osc_thread = start_osc_server_in_thread(get_ip(), int(config['osc_server_port']))
-
-
-# GUI layout
     
-root = tk.CTk()
-root.title("MIDI & OSC Control")
+# Function to send OSC message
+def send_osc_message(address, value):
+    global osc_tosc_client
+    debug_print("send_osc_message address")
+    debug_print(address)
+    debug_print("send_osc_message value")
+    debug_print(value)
 
-midi_devices = mido.get_input_names()
-selected_midi_device = tk.StringVar(value=config['midi_input_device'])
-
-tk.CTkLabel(root, text="Select MIDI Device:").grid(row=0, column=0, padx=20, pady=10)
-midi_device_dropdown = tk.CTkOptionMenu(master=root, variable=selected_midi_device, values=midi_devices)
-midi_device_dropdown.grid(row=0, column=1, padx=20, pady=10)
-
-tk.CTkButton(root, text="Start MIDI Receiving", command=lambda: start_midi(selected_midi_device.get())).grid(row=0, column=2, padx=20, pady=10)
-tk.CTkButton(root, text="Stop MIDI", command=stop_midi).grid(row=0, column=3, padx=20, pady=10)
-
-tk.CTkLabel(root, text="Select SQLite Database:").grid(row=1, column=0, padx=20, pady=10)
-file_path_entry = tk.CTkEntry(root)
-file_path_entry.grid(row=1, column=1, columnspan=2, padx=20, pady=10, sticky='w'+'e'+'n'+'s')
-file_path_entry.insert(0, config['file_path'])
-tk.CTkButton(root, text="Browse", command=selectfile).grid(row=1, column=3, padx=20, pady=10)
-
-tk.CTkLabel(root, text="OSC Host:").grid(row=2, column=0, padx=20, pady=10)
-osc_host_entry = tk.CTkEntry(root)
-osc_host_entry.grid(row=2, column=1, padx=20, pady=10)
-osc_host_entry.insert(0, config['osc_tosc_server_address'])
-autostartosc_var = tk.BooleanVar(value=config['autostartosc'])
-tk.CTkCheckBox(root, text='Start OSC on program startup', variable=autostartosc_var).grid(row=2, column=2, columnspan=2, padx=20, pady=10)
-
-tk.CTkLabel(root, text="OSC Send Port:").grid(row=3, column=0, padx=20, pady=10)
-osc_send_port_entry = tk.CTkEntry(root)
-osc_send_port_entry.grid(row=3, column=1, padx=20, pady=10)
-osc_send_port_entry.insert(0, config['osc_tosc_server_port'])
-
-tk.CTkLabel(root, text="OSC Receive Port:").grid(row=3, column=2, padx=20, pady=10)
-osc_receive_port_entry = tk.CTkEntry(root)
-osc_receive_port_entry.grid(row=3, column=3, padx=20, pady=10)
-osc_receive_port_entry.insert(0, config['osc_server_port'])
-
-tk.CTkButton(root, text="Start OSC", command=start_osc).grid(row=4, column=0, padx=20, pady=10)
-tk.CTkButton(root, text="Send OSC TEST Message", command=send_osc_test).grid(row=4, column=1, padx=20, pady=10)
-tk.CTkButton(root, text="Test Database Query", command=test_database_query).grid(row=4, column=2, padx=20, pady=10)
-
-def on_closing():
+    osc_tosc_client.send_message(address, value)
+         
+def connect_to_osc_server(osc_server_address, osc_server_port):
+    global osc_tosc_client
+    try:
+        client = CustomSimpleUDPClient(osc_server_address, osc_server_port)
+        debug_print(f"Connected to OSC server: {osc_server_address}:{osc_server_port}")
+        return client
+    except Exception as e:
+        sg.popup_error(f"Error connecting to OSC server:\n{e}")
+        return None
+    
+def receive_osc_message(addr, *args):
+    debug_print(f"Received OSC message: {addr} {args}")
+    
+def start_osc_server(host, port):
+    dispatcher = osc_server.Dispatcher()
+    dispatcher.set_default_handler(receive_osc_message)
     global stop_threads
+    stop_threads = False
+    server = osc_server.ThreadingOSCUDPServer((host, port), dispatcher)
+
+    debug_print(f"OSC Server listening on port {port}")
+
+    while not stop_threads:
+        # Use select to handle requests with a timeout
+        readable, _, _ = select.select([server.socket], [], [], 1.0)
+        if readable:
+            server.handle_request()
+
+    server.server_close()
+    debug_print("OSC Server stopped.")
+
+
+def start_osc_server_in_thread(host, port):
     global osc_thread
+    osc_thread = Thread(target=start_osc_server, args=[host, port])
+    osc_thread.start()
+    return osc_thread
+
+def main():
     
-    stop_midi()
-    root.destroy()
-    debug_print("Exiting the program")
-    stop_threads = True  # Set the stop flag to signal the OSC thread to stop
-    if osc_thread:
-        osc_thread.join()  # Wait for the OSC thread to finish
+    config = load_config()
+    global midi_input_port
+    global database_file
+    global osc_thread
+    global stop_threads
+    global osc_tosc_client
+    # GUI layout
+    layout = [
+        [sg.Text("Select MIDI Device:"), sg.DropDown(values=mido.get_input_names(), key='-MIDIDEVICE-', default_value=config['midi_input_device']),
+            sg.Button("Start MIDI Receiving", key='-STARTMIDI-'), sg.Button("Stop MIDI", key='-STOPMIDI-')],
+        [sg.Text("Select SQLite Database:"), sg.InputText(key='-FILE-', default_text=config['file_path']), sg.FileBrowse()],
+        [sg.Text("OSC Host:"), sg.InputText(key='-OSCTOSCSERVERADDR-', default_text=config['osc_tosc_server_address'])],
+        [sg.Text("OSC Send Port:"), sg.InputText(key='-OSCTOSCSERVERPORT-', default_text=config['osc_tosc_server_port'])],
+        [sg.Text("OSC Receive Port:"), sg.InputText(key='-OSCSERVERPORT-', default_text=config['osc_server_port'])],
+        [sg.Checkbox('Start OSC on program startup', key='-AUTOSTARTOSC-', default=config['autostartosc'])],
+        [sg.Button("Start OSC", key='-STARTOSC-'), sg.Button("Send OSC TEST Message", key='SEND_OSC')],
+        [sg.Button("Test Database Query", key='test_query')],
+    ]
+
+    window = sg.Window("MIDI & OSC Control", layout)
+    # OSC setup
+    if(config['autostartosc']):
+        if config['osc_tosc_server_address'] and config['osc_tosc_server_port']:
+            osc_tosc_client = connect_to_osc_server(config['osc_tosc_server_address'], int(config['osc_tosc_server_port']))
+        if config['osc_server_port']:
+            osc_thread = start_osc_server_in_thread(get_ip(), int(config['osc_server_port']))
+
+    # Main event loop
+    while True:
+        event, values = window.read()
+
+        if(midi_input_port):
+            for msg in midi_input_port.iter_pending():
+                print(msg)
+
+        if event in (sg.WIN_CLOSED, 'Exit'):
+            debug_print("Exiting the program")
+            stop_threads = True  # Set the stop flag to signal the OSC thread to stop
+            if osc_thread:
+                osc_thread.join()  # Wait for the OSC thread to finish
+
+            break
+        elif event == '-STARTMIDI-':
+            #TODO: check if midi device is existing and available (error handling), add to autostart option
+            if values['-MIDIDEVICE-'] and values['-FILE-']:
+                debug_print('Starting MIDI...')
+                midi_input_port = mido.open_input(values['-MIDIDEVICE-'])
+                midi_input_port.callback = process_midi_message
+                database_file = values['-FILE-']
+                save_config(database_file, None, None, None, None, values['-MIDIDEVICE-'])
+            else:
+                sg.popup("Please select both MIDI device and SQLite database.")
+        elif event == 'SEND_OSC':
+            osc_tosc_client.send_message("/deck1_trackinfo", r"TEST \n Newline \r Return \r\n RN")
+            #send_osc_message("/deck1_trackinfo", "TEST \n Newline\rReturn\r\nRN")
+        elif event == 'test_query':
+            database_file = values['-FILE-']
+            save_config(database_file, None, None, None, None, None)
+            query_database(173, 152.0, 'A')
+        elif event == '-STOPMIDI-':
+            if(midi_input_port):
+                debug_print('Stopping MIDI...')
+                midi_input_port.close()
+        elif event == '-STARTOSC-':
+            if values['-OSCTOSCSERVERADDR-'] and values['-OSCTOSCSERVERPORT-'] and values['-OSCSERVERPORT-']:
+                autostartosc = values['-AUTOSTARTOSC-']
+                osc_tosc_server_address = values['-OSCTOSCSERVERADDR-']
+                osc_tosc_server_port = values['-OSCTOSCSERVERPORT-']
+                osc_server_port = values['-OSCSERVERPORT-']
+                debug_print(f"Saved osc_tosc_server_address: {osc_tosc_server_address}")
+                debug_print(f"Saved osc_tosc_server_port: {osc_tosc_server_port}")
+                save_config(None, autostartosc, osc_tosc_server_address, osc_tosc_server_port, osc_server_port, None)
+                if osc_tosc_server_address and osc_tosc_server_port:
+                    osc_tosc_client = connect_to_osc_server(osc_tosc_server_address, int(osc_tosc_server_port))
+
+                #TODO: server not used at the moment as no respone is required
+                # Start OSC server in a separate thread
+                #osc_server_host = get_ip()
+                #if osc_thread:
+                #    osc_thread.join()  # Wait for the previous OSC thread to finish
+                #osc_thread = start_osc_server_in_thread(osc_server_host, int(osc_server_port))
+            else:
+                sg.popup("Please enter OSC host, send port, and receive port.")
+    window.close()
 
 
-root.protocol("WM_DELETE_WINDOW", on_closing)
-
-root.mainloop()
-
+if __name__ == "__main__":
+    main()
